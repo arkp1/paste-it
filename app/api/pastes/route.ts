@@ -13,7 +13,7 @@ export async function POST(request: Request) {
   if (maxViews !== null && (!Number.isInteger(maxViews) || maxViews < 1 || maxViews > 1000000)) {
     return NextResponse.json({ error: "Maximum views must be a whole number." }, { status: 400 });
   }
-  const paste = createPaste({
+  const paste = await createPaste({
     title: typeof body.title === "string" ? body.title.slice(0, 100) : "",
     content: body.content,
     expires: expiryOptions.has(body.expires) ? body.expires : "never",

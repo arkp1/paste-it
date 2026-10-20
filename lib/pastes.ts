@@ -1,3 +1,5 @@
+import { del, get, put } from "@vercel/blob";
+
 export type ExpiryOption = "never" | "hour" | "day" | "week";
 
 export type Paste = {
@@ -10,29 +12,29 @@ export type Paste = {
   views: number;
 };
 
-declare global {
-  // Keep the collection across dev hot reloads. Replace this with a database for production use.
-  // eslint-disable-next-line no-var
-  var pasteStore: Map<string, Paste> | undefined;
-}
-
-const store = globalThis.pasteStore ?? new Map<string, Paste>();
-globalThis.pasteStore = store;
-
 const expiryDurations: Record<Exclude<ExpiryOption, "never">, number> = {
   hour: 60 * 60 * 1000,
   day: 24 * 60 * 60 * 1000,
   week: 7 * 24 * 60 * 60 * 1000
 };
 
-export function createPaste(input: {
+const pathnameFor = (id: string) => `pastes/${id}.json`;
+
+async function fetchPaste(id: string) {
+  const result = await get(pathnameFor(id), { access: "private" });
+  if (!result || result.statusCode !== 200 || !result.stream) return null;
+  return JSON.parse(await new Response(result.stream).text()) as Paste;
+}
+
+export async function createPaste(input: {
   title: string;
   content: string;
   expires: ExpiryOption;
   maxViews: number | null;
 }) {
   const now = Date.now();
-  const id = crypto.randomUUID().replace(/-/g, "").slice(0, 10);
+  // 128 bits of entropy makes a share URL effectively unguessable.
+  const id = crypto.randomUUID().replace(/-/g, "");
   const paste: Paste = {
     id,
     title: input.title || "Untitled paste",
@@ -42,21 +44,31 @@ export function createPaste(input: {
     maxViews: input.maxViews,
     views: 0
   };
-  store.set(id, paste);
+  await put(pathnameFor(id), JSON.stringify(paste), {
+    access: "private",
+    addRandomSuffix: false,
+    contentType: "application/json"
+  });
   return paste;
 }
 
-export function readPaste(id: string): { paste?: Paste; expired: boolean } {
-  const paste = store.get(id);
+export async function readPaste(id: string): Promise<{ paste?: Paste; expired: boolean }> {
+  const paste = await fetchPaste(id);
   if (!paste) return { expired: false };
 
   const expiredByTime = paste.expiresAt !== null && Date.now() >= paste.expiresAt;
   const expiredByViews = paste.maxViews !== null && paste.views >= paste.maxViews;
   if (expiredByTime || expiredByViews) {
-    store.delete(id);
+    await del(pathnameFor(id));
     return { expired: true };
   }
 
   paste.views += 1;
+  await put(pathnameFor(id), JSON.stringify(paste), {
+    access: "private",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    contentType: "application/json"
+  });
   return { paste, expired: false };
 }
